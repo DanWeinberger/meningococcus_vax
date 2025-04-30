@@ -1,0 +1,158 @@
+---
+title: "Meningococcal Immunization"
+format: html
+editor: visual
+---
+
+## Meningococcal vaccination
+
+```{r setup}
+library(tidyverse)
+library(readxl)
+library(reshape2)
+library(INLA)
+library(inlabru)
+```
+
+```{r}
+#Data import
+a1 <- read_excel('./Data/MenACWY_coverage.xlsx') %>%
+  reshape2::melt(., id.vars=c('STATE','REQyn','REQyear')) %>%
+  rename(year=variable, uptake=value) %>%
+  mutate( year=as.numeric(as.character(year)),
+          yearN = year-min(year, na.rm=T),
+          yearN2=yearN,
+          REQyear = if_else(is.na(REQyear),9999, REQyear),
+    post_vax = if_else(year >= REQyear, year - REQyear + 1 , 0),
+    post_vax2=post_vax,
+    post_vax_cap = if_else(post_vax>5,5,post_vax),
+    post_vax_cap2= post_vax_cap,
+    post_vax_binary = if_else(post_vax>0,1,0),
+    post_vax_cat = if_else(post_vax==0, 0,
+                           if_else(post_vax>0 & post_vax<=2,1,
+                                                             if_else(post_vax>2,2,NA_real_
+ 
+                                   ))),
+    post_vax_cat1 = if_else(post_vax_cat==1,1,0),
+     post_vax_cat2 = if_else(post_vax_cat==2,1,0),
+
+    post_vax_cat = as.factor(post_vax_cat),
+    prop= uptake/100,
+    logit_uptake = log(prop/(1-prop))  ,
+    logit_uptake_scale = (logit_uptake-mean(logit_uptake))/sd(logit_uptake) )
+
+
+a1a <- a1 %>%
+    mutate(post_vax_cap=0,
+           post_vax_cap2=0,
+           logit_uptake_scale=NA,
+           cf=1,
+           )
+b1 <-bind_rows(a1,a1a)
+
+```
+
+```{r}
+
+ggplot(a1, aes(x=year, y=logit_uptake, color=post_vax_cap))+
+  geom_point()+
+  theme_classic()
+```
+
+```{r}
+
+mod0 <-  inla(logit_uptake_scale ~ 1 + yearN2 + post_vax_cat1 +post_vax_cat2 +
+                # f(STATE, model = "iid")+
+                f(STATE, model = "iid") + 
+                f(yearN, model='ar1') , 
+  data = a1,
+  control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+  control.predictor = list(compute = TRUE)
+)
+
+summary(mod0)
+
+re.year <- mod1$summary.random$yearN
+fe.year <- mod0$summary.fixed['yearN2','mean']
+ggplot(re.year, aes(x=ID, y=(mean+fe.year))) +
+geom_line()+
+  geom_ribbon( aes(x=ID, ymin=`0.025quant`, ymax=`0.975quant`), alpha=0.2)+
+  theme_classic()
+```
+
+```{r}
+ mod1 <- inla(logit_uptake ~ 1 + yearN2 +  
+                f(STATE, model = "iid") + 
+                f(yearN, model='ar1') + 
+                f(post_vax_cap, model='rw1') , 
+  
+  data = b1,
+  control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+  control.predictor = list(compute = TRUE)
+)
+
+re.year <- mod1$summary.random$yearN
+fe.year <- mod1$summary.fixed['yearN2','mean']
+ggplot(re.year, aes(x=ID, y=(mean+fe.year))) +
+geom_line()+
+  geom_ribbon( aes(x=ID, ymin=`0.025quant`, ymax=`0.975quant`), alpha=0.2)+
+  theme_classic()
+
+
+```
+
+Random effect for time since mandate
+
+```{r}
+
+#fixed.vax2.beta <- mod1$summary.fixed['post_vax_cap2','mean']
+ re.vax <- mod1$summary.random$post_vax_cap %>%
+    rename(lcl= `0.025quant`,
+           ucl=`0.975quant`)
+
+re.vax0 <- re.vax %>% 
+  filter(ID==0) %>%
+  rename(mean0=mean,
+         lcl0=lcl,
+         ucl0=ucl) %>%
+  dplyr::select(mean0, ucl0, lcl0) %>%
+  cross_join(re.vax) %>%
+  mutate( mean=mean-mean0,
+          lcl=lcl-mean0,
+          ucl=ucl-mean0,
+          RR = exp(mean),
+          RR_LCL=exp(lcl),
+          RR_UCL=exp(ucl))
+
+
+
+ggplot(re.vax0, aes(x=ID, y=RR)) +
+  geom_line()+
+  geom_ribbon( aes(x=ID, ymin=RR_LCL, ymax=RR_UCL), alpha=0.2)+
+  theme_classic()
+
+
+cf1 <- mod1$summary.fitted.values %>%
+    rename(lcl= `0.025quant`,
+           ucl=`0.975quant`)
+
+cf2 <- cbind.data.frame(cf1, b1) %>%
+  mutate(cf=if_else(is.na(cf),0,cf),
+         cf= if_else(year < REQyear,0 ,cf),
+         pred_prop= exp(mean)/(1+exp(mean)),
+         pred_prop_lcl= exp(lcl)/(1+exp(lcl)),
+         pred_prop_ucl= exp(ucl)/(1+exp(ucl))
+         )
+
+
+p1 <- cf2 %>%
+  filter(grepl("Georgia", STATE)) %>%
+  ggplot(aes(x=year, y=pred_prop, color=cf, group=cf))+
+  geom_line()+
+  theme_minimal() +
+  geom_point(aes(x=year, y=uptake/100))
+p1
+
+```
+
+# to test: does pre-mandate rate affect RR for the state?
