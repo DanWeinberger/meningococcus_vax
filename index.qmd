@@ -36,7 +36,8 @@ a1 <- read_excel('./Data/MenACWY_coverage.xlsx') %>%
                                    ))),
     post_vax_cat1 = if_else(post_vax_cat==1,1,0),
      post_vax_cat2 = if_else(post_vax_cat==2,1,0),
-
+    
+ post_vax_cat2a=post_vax_cat2,
     post_vax_cat = as.factor(post_vax_cat),
     
     unvax_prop = (100-uptake)/100,
@@ -118,82 +119,19 @@ ggplotly(p1)
 
 ```
 
-```{r}
- mod1 <- inla(logit_uptake ~ 1 + yearN2 +   
-                f(STATE, model = "iid") + 
-                f(yearN, model='rw1', group=STATE2) + 
-                f(post_vax_cap, model='rw1') , 
-  
-  data = b1,
-  control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
-  control.predictor = list(compute = TRUE)
-)
 
-summary(mod1)
-
-re.year <- mod1$summary.random$yearN
-fe.year <- mod1$summary.fixed['yearN2','mean']
-ggplot(re.year, aes(x=ID, y=(mean+fe.year))) +
-geom_line()+
-  geom_ribbon( aes(x=ID, ymin=`0.025quant`, ymax=`0.975quant`), alpha=0.2)+
-  theme_classic()
-
-
-
-```
-
-Random effect for time since mandate
-
-```{r}
-
-#fixed.vax2.beta <- mod1$summary.fixed['post_vax_cap2','mean']
- re.vax <- mod1$summary.random$post_vax_cap %>%
-    rename(lcl= `0.025quant`,
-           ucl=`0.975quant`)
-
-re.vax0 <- re.vax %>% 
-  filter(ID==0) %>%
-  rename(mean0=mean,
-         lcl0=lcl,
-         ucl0=ucl) %>%
-  dplyr::select(mean0, ucl0, lcl0) %>%
-  cross_join(re.vax) %>%
-  mutate( mean=mean-mean0,
-          lcl=lcl-mean0,
-          ucl=ucl-mean0,
-          RR = exp(mean),
-          RR_LCL=exp(lcl),
-          RR_UCL=exp(ucl))
-
-
-
-ggplot(re.vax0, aes(x=ID, y=RR)) +
-  geom_line()+
-  geom_ribbon( aes(x=ID, ymin=RR_LCL, ymax=RR_UCL), alpha=0.2)+
-  theme_classic()
-
-
-cf1 <- mod1$summary.fitted.values %>%
-    rename(lcl= `0.025quant`,
-           ucl=`0.975quant`)
-
-cf2 <- cbind.data.frame(cf1, b1) %>%
-  mutate(cf=if_else(is.na(cf),0,cf),
-         cf= if_else(year < REQyear,0 ,cf),
-         pred_prop= exp(mean)/(1+exp(mean)),
-         pred_prop_lcl= exp(lcl)/(1+exp(lcl)),
-         pred_prop_ucl= exp(ucl)/(1+exp(ucl))
-         )
-
-
-p1 <- cf2 %>%
-  filter(grepl("Georgia", STATE)) %>%
-  ggplot(aes(x=year, y=pred_prop, color=cf, group=cf))+
-  geom_line()+
-  theme_minimal() +
-  geom_point(aes(x=year, y=uptake/100))
-ggplotly(p1)
-
-```
 
 # to test: does pre-mandate rate affect RR for the state?
+## Random slope for state?
+
+```{r}
+
+# mod1 <-  inla(logit_unvax ~ 1 +  post_vax_cat1 +post_vax_cat2 +
+#                 f(post_vax_cat2a,STATE, model='iid') +
+#                 f(STATE, model = "iid") + 
+#                 f(yearN2, model='rw2') + 
+#                 f(yearN, model='rw2', group=STATE2) , 
+#   data = b1,
+#   control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+#   control.predictor = list(compute = TRUE)
+# )
